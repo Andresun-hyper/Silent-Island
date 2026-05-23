@@ -1,0 +1,243 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  background: #d9d5cf;
+}
+
+body {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+.ink-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #d9d5cf;
+  color: rgba(42, 32, 24, 0.72);
+  width: 100dvw;
+  height: 100dvh;
+  min-height: 100svh;
+}
+
+.ink-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.ink-canvas:active {
+  cursor: grabbing;
+}
+
+.app-mark {
+  position: fixed;
+  top: clamp(18px, 4vw, 40px);
+  left: clamp(18px, 4vw, 44px);
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  pointer-events: none;
+  opacity: 0.86;
+  mix-blend-mode: multiply;
+}
+
+.app-title {
+  font-family: "Segoe Print", "Bradley Hand ITC", "KaiTi", "STKaiti", cursive;
+  font-size: clamp(19px, 3vw, 35px);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1;
+  color: rgba(36, 28, 22, 0.68);
+  text-shadow: 0 1px 10px rgba(217, 213, 207, 0.45);
+}
+
+.app-session {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-family: "Segoe Print", "Bradley Hand ITC", "KaiTi", "STKaiti", cursive;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: rgba(52, 40, 30, 0.45);
+}
+
+.app-session span + span::before {
+  content: "";
+  display: inline-block;
+  width: 26px;
+  height: 1px;
+  margin: 0 10px 3px 0;
+  background: rgba(42, 32, 24, 0.24);
+}
+
+.motif-dock {
+  position: fixed;
+  right: clamp(14px, 3.2vw, 36px);
+  bottom: clamp(18px, 4vw, 40px);
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.motif-button {
+  width: 37px;
+  height: 37px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(64, 49, 36, 0.18);
+  border-radius: 50%;
+  background: rgba(217, 213, 207, 0.54);
+  color: rgba(34, 25, 19, 0.58);
+  box-shadow: 0 8px 24px rgba(40, 32, 24, 0.055);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.motif-button span {
+  display: block;
+  font-family: "Segoe Print", "Bradley Hand ITC", "KaiTi", "STKaiti", cursive;
+  font-size: 19px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.motif-button:hover,
+.motif-button:focus-visible {
+  border-color: rgba(45, 33, 23, 0.32);
+  color: rgba(28, 20, 15, 0.76);
+  background: rgba(224, 221, 216, 0.72);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.motif-button.is-active {
+  border-color: rgba(44, 32, 22, 0.38);
+  color: rgba(24, 18, 14, 0.78);
+  background: rgba(223, 218, 210, 0.76);
+}
+
+.tension-thread {
+  position: fixed;
+  left: clamp(18px, 4vw, 44px);
+  bottom: clamp(19px, 4vw, 43px);
+  z-index: 2;
+  width: min(184px, 36vw);
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(51, 39, 29, 0.12);
+  transform-origin: left center;
+}
+
+.tension-thread div {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  background: rgba(38, 28, 20, 0.34);
+  transition: transform 120ms ease-out;
+}
+
+@media (max-width: 680px) {
+  .app-mark {
+    top: calc(env(safe-area-inset-top, 0px) + 14px);
+    left: calc(env(safe-area-inset-left, 0px) + 16px);
+    gap: 5px;
+    max-width: calc(100dvw - 32px);
+  }
+
+  .app-title {
+    font-size: clamp(20px, 7vw, 29px);
+  }
+
+  .app-session {
+    gap: 8px;
+    font-size: 10px;
+  }
+
+  .app-session span + span::before {
+    width: 18px;
+    margin-right: 8px;
+  }
+
+  .motif-dock {
+    right: auto;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 15px);
+    left: 50%;
+    gap: 9px;
+    transform: translateX(-50%);
+  }
+
+  .motif-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .motif-button span {
+    font-size: 20px;
+  }
+
+  .tension-thread {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+    left: 50%;
+    width: min(168px, 44dvw);
+    transform: translateX(-50%);
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .app-mark {
+    top: 12px;
+    left: 16px;
+    gap: 4px;
+  }
+
+  .app-title {
+    font-size: clamp(18px, 4vh, 23px);
+  }
+
+  .app-session {
+    font-size: 9px;
+  }
+
+  .motif-dock {
+    right: 14px;
+    bottom: 12px;
+    gap: 6px;
+  }
+
+  .motif-button {
+    width: 32px;
+    height: 32px;
+  }
+
+  .motif-button span {
+    font-size: 17px;
+  }
+
+  .tension-thread {
+    left: 16px;
+    bottom: 15px;
+    width: 112px;
+  }
+}
