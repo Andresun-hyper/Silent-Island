@@ -81,6 +81,81 @@ interface SceneViewport {
   height: number;
 }
 
+/**
+ * The static base layer is everything that does not need to be repainted
+ * every frame: the grass washes, the path reserve glow, the path wash fills,
+ * and the pole shafts / cross-arm fills / insulator fills.
+ *
+ * It is rendered exactly once per resize (or DPR change). The main canvas
+ * then blits this image every frame at O(pixels) cost instead of redoing
+ * thousands of strokes and several `ctx.filter` blurs.
+ */
+interface StaticBaseCache {
+  canvas: HTMLCanvasElement;
+  cssWidth: number;
+  cssHeight: number;
+  dpr: number;
+}
+
+/** Stable seed for the static layer — reproducible across rebuilds. */
+const STATIC_SEED = 0x1ce17;
+
+/** How many real frames share one boil seed for the dynamic layer. Mimics the
+ *  "on twos / threes" feel of traditional cel animation. */
+const BOIL_FRAME_STRIDE = 5;
+
+function getStaticBaseLayer(
+  cssW: number,
+  cssH: number,
+  dpr: number,
+  patches: ReturnType<typeof buildGrassPatches>,
+  cache: StaticBaseCache | null
+): StaticBaseCache {
+  if (
+    cache &&
+    cache.cssWidth === cssW &&
+    cache.cssHeight === cssH &&
+    cache.dpr === dpr
+  ) {
+    return cache;
+  }
+
+  const canvas = cache?.canvas ?? document.createElement("canvas");
+  canvas.width  = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const viewport = computeSceneViewport(cssW, cssH);
+
+    ctx.save();
+    ctx.translate(viewport.x, viewport.y);
+
+    // Grass — easily the heaviest paint in the scene. With this cache it now
+    // runs exactly once per resize. The barely-perceptible sway in t was
+    // never visible to the eye anyway (period ≈ 20 s, amp ≈ 0.001 normalized).
+    drawGrassPatches(ctx, patches, viewport.width, viewport.height, 0, STATIC_SEED);
+
+    // Reserve blank paper around the path before painting the path fills.
+    drawPathReserve(ctx, viewport.width, viewport.height);
+
+    // Path wash fills + center spine shadow.
+    drawPathStatic(ctx, viewport.width, viewport.height, STATIC_SEED);
+
+    // Pole shafts back-to-front (fills + grain + arm fill + insulator fill).
+    for (let i = POLES.length - 1; i >= 0; i--) {
+      drawPoleStatic(ctx, i, viewport.width, viewport.height, STATIC_SEED);
+    }
+
+    ctx.restore();
+  }
+
+  return { canvas, cssWidth: cssW, cssHeight: cssH, dpr };
+}
+
 // ─── Core stroke helper ──────────────────────────────────────────────────────
 
 function inkStroke(
@@ -143,15 +218,11 @@ function washFill(
 
 // ─── Path ────────────────────────────────────────────────────────────────────
 
-function drawPath(
-  ctx: CanvasRenderingContext2D,
-  w: number, h: number,
-  seed: number
-): void {
+// Shared geometry for the path edges. Cheap enough to recompute, kept here so
+// the static fill and the dynamic outline never drift apart.
+function pathEdgePolygons(): { leftEdge: Vec2[]; rightEdge: Vec2[]; poly: Vec2[] } {
   const ctrl = PATH_CONTROLS;
-
-  // Build left + right edges with a natural widening toward the viewer
-  const leftEdge: Vec2[]  = ctrl.map((p, i) => ({
+  const leftEdge: Vec2[] = ctrl.map((p, i) => ({
     x: p.x - 0.034 - i * 0.0018,
     y: p.y + 0.002,
   }));
@@ -159,8 +230,17 @@ function drawPath(
     x: p.x + 0.034 + i * 0.0016,
     y: p.y - 0.002,
   }));
-
   const poly: Vec2[] = [...leftEdge, ...[...rightEdge].reverse()];
+  return { leftEdge, rightEdge, poly };
+}
+
+/** Static portion of the path: wash fills + center shadow. Baked once per resize. */
+function drawPathStatic(
+  ctx: CanvasRenderingContext2D,
+  w: number, h: number,
+  seed: number
+): void {
+  const { poly } = pathEdgePolygons();
 
   // Three wash layers — light to dark
   washFill(ctx, poly, w, h, EARTH_BASE, seed,            0.003, 3);
@@ -168,7 +248,7 @@ function drawPath(
   washFill(ctx, poly, w, h, EARTH_DARK, seed ^ 0x1234,  0.005, 2);
 
   // Shadow pool down the center spine
-  const spine: Vec2[] = ctrl.map(p => ({ x: p.x, y: p.y }));
+  const spine: Vec2[] = PATH_CONTROLS.map(p => ({ x: p.x, y: p.y }));
   const spineW = w * 0.012;
   ctx.save();
   ctx.strokeStyle = SHADOW_LIGHT;
@@ -181,16 +261,23 @@ function drawPath(
   for (let i = 1; i < bs.length; i++) ctx.lineTo(bs[i].x * w, bs[i].y * h);
   ctx.stroke();
   ctx.restore();
+}
 
-  // Path edge ink lines
+/** Dynamic portion of the path: edge ink lines + rut marks. Re-drawn each frame. */
+function drawPathDynamic(
+  ctx: CanvasRenderingContext2D,
+  w: number, h: number,
+  seed: number
+): void {
+  const ctrl = PATH_CONTROLS;
+  const { leftEdge, rightEdge } = pathEdgePolygons();
+
   inkStroke(ctx, boilPoints(leftEdge,  seed ^ 0x1111, 0.003), w, h, 1.4, INK_MED,  2);
   inkStroke(ctx, boilPoints(rightEdge, seed ^ 0x2222, 0.003), w, h, 1.4, INK_MED,  2);
 
-  // Fine edge texture — broken secondary strokes for a worn earth feel
   inkStroke(ctx, boilPoints(leftEdge.slice(1),  seed ^ 0x3333, 0.005), w, h, 0.6, INK_LIGHT, 1);
   inkStroke(ctx, boilPoints(rightEdge.slice(1), seed ^ 0x4444, 0.005), w, h, 0.6, INK_LIGHT, 1);
 
-  // Scattered rut marks
   for (let i = 1; i < ctrl.length - 1; i += 2) {
     const cx = ctrl[i].x;
     const cy = ctrl[i].y;
@@ -244,35 +331,58 @@ function drawPathReserve(
 
 // ─── Poles ───────────────────────────────────────────────────────────────────
 
-function drawPole(
-  ctx: CanvasRenderingContext2D,
-  poleIdx: number,
-  w: number, h: number,
-  seed: number
-): void {
+interface PoleGeometry {
+  left: Vec2[];
+  right: Vec2[];
+  shaftPoly: Vec2[];
+  arm: Vec2[];
+  armBot: Vec2[];
+  armPoly: Vec2[];
+}
+
+function buildPoleGeometry(poleIdx: number): PoleGeometry {
   const pole = POLES[poleIdx];
   const taper = 0.005; // pole narrows toward top
-
-  // Build the shaft polygon (left + right sides tapering)
   const steps = 8;
-  const left: Vec2[]  = [];
+  const left: Vec2[] = [];
   const right: Vec2[] = [];
   for (let s = 0; s <= steps; s++) {
-    const t  = s / steps;
+    const t = s / steps;
     const bx = lerp(pole.base.x, pole.top.x, t);
     const by = lerp(pole.base.y, pole.top.y, t);
     const hw = lerp(0.009, 0.009 - taper, t);
     left.push({ x: bx - hw, y: by });
     right.push({ x: bx + hw, y: by });
   }
-
   const shaftPoly: Vec2[] = [...left, ...[...right].reverse()];
 
-  // Weathered wood fill — two washes
+  const { left: crossL, right: crossR } = pole.crossArm;
+  const armSpan = 0.010;
+  const arm: Vec2[] = [
+    { x: crossL.x - armSpan, y: crossL.y + 0.006 },
+    { x: crossL.x,           y: crossL.y },
+    { x: crossR.x,           y: crossR.y },
+    { x: crossR.x + armSpan, y: crossR.y + 0.006 },
+  ];
+  const armBot: Vec2[] = arm.map(p => ({ x: p.x, y: p.y + 0.009 }));
+  const armPoly: Vec2[] = [...arm, ...[...armBot].reverse()];
+
+  return { left, right, shaftPoly, arm, armBot, armPoly };
+}
+
+/** Static portion of a pole: shaft fill, grain streaks, arm fill, insulator fill. */
+function drawPoleStatic(
+  ctx: CanvasRenderingContext2D,
+  poleIdx: number,
+  w: number, h: number,
+  seed: number
+): void {
+  const pole = POLES[poleIdx];
+  const { shaftPoly, armPoly } = buildPoleGeometry(poleIdx);
+
   washFill(ctx, shaftPoly, w, h, POLE_FILL,             seed ^ (poleIdx * 0xabcd), 0.002, 3);
   washFill(ctx, shaftPoly, w, h, "rgba(70,50,32,0.18)", seed ^ (poleIdx * 0x1357), 0.003, 2);
 
-  // Grain lines (vertical streaks of darker ink)
   for (let g = 0; g < 3; g++) {
     const gx = lerp(pole.base.x - 0.006, pole.base.x + 0.006, g / 2);
     const grain: Vec2[] = [
@@ -282,28 +392,9 @@ function drawPole(
     inkStroke(ctx, boilPoints(grain, seed ^ (g * 0xef01 + poleIdx), 0.0018), w, h, 0.5, INK_LIGHT, 1);
   }
 
-  // Silhouette strokes — main two edges
-  inkStroke(ctx, boilPoints(left,  seed ^ 0xaaaa, 0.002), w, h, 1.8, INK_DARK, 2);
-  inkStroke(ctx, boilPoints(right, seed ^ 0xbbbb, 0.002), w, h, 1.8, INK_DARK, 2);
-
-  // Cross-arm
-  const { left: crossL, right: crossR } = pole.crossArm;
-  const armSpan = 0.010;
-  const arm: Vec2[] = [
-    { x: crossL.x - armSpan, y: crossL.y + 0.006 },
-    { x: crossL.x,           y: crossL.y },
-    { x: crossR.x,           y: crossR.y },
-    { x: crossR.x + armSpan, y: crossR.y + 0.006 },
-  ];
-  // Arm fill
-  const armBot: Vec2[] = arm.map(p => ({ x: p.x, y: p.y + 0.009 }));
-  const armPoly: Vec2[] = [...arm, ...[...armBot].reverse()];
   washFill(ctx, armPoly, w, h, POLE_FILL, seed ^ 0x2468, 0.002, 2);
 
-  inkStroke(ctx, boilPoints(arm,    seed ^ 0xcccc, 0.0016), w, h, 2.4, INK_DARK, 2);
-  inkStroke(ctx, boilPoints(armBot, seed ^ 0xdddd, 0.0012), w, h, 1.0, INK_MED,  1);
-
-  // Insulators
+  const { left: crossL, right: crossR } = pole.crossArm;
   for (const pt of [crossL, crossR]) {
     const nub: Vec2[] = [
       { x: pt.x - 0.006, y: pt.y - 0.005 },
@@ -312,6 +403,33 @@ function drawPole(
       { x: pt.x - 0.006, y: pt.y + 0.005 },
     ];
     washFill(ctx, boilPoints(nub, seed ^ 0xe0e0, 0.002), w, h, EARTH_DARK, seed ^ 0x7890, 0.002, 2);
+  }
+}
+
+/** Dynamic portion of a pole: edge silhouettes, arm outlines, insulator outlines. */
+function drawPoleDynamic(
+  ctx: CanvasRenderingContext2D,
+  poleIdx: number,
+  w: number, h: number,
+  seed: number
+): void {
+  const pole = POLES[poleIdx];
+  const { left, right, arm, armBot } = buildPoleGeometry(poleIdx);
+
+  inkStroke(ctx, boilPoints(left,  seed ^ 0xaaaa, 0.002), w, h, 1.8, INK_DARK, 2);
+  inkStroke(ctx, boilPoints(right, seed ^ 0xbbbb, 0.002), w, h, 1.8, INK_DARK, 2);
+
+  inkStroke(ctx, boilPoints(arm,    seed ^ 0xcccc, 0.0016), w, h, 2.4, INK_DARK, 2);
+  inkStroke(ctx, boilPoints(armBot, seed ^ 0xdddd, 0.0012), w, h, 1.0, INK_MED,  1);
+
+  const { left: crossL, right: crossR } = pole.crossArm;
+  for (const pt of [crossL, crossR]) {
+    const nub: Vec2[] = [
+      { x: pt.x - 0.006, y: pt.y - 0.005 },
+      { x: pt.x + 0.006, y: pt.y - 0.005 },
+      { x: pt.x + 0.006, y: pt.y + 0.005 },
+      { x: pt.x - 0.006, y: pt.y + 0.005 },
+    ];
     inkStroke(ctx, boilPoints(nub, seed ^ 0xf1f1, 0.001), w, h, 0.9, INK_DARK, 1);
   }
 }
@@ -688,56 +806,66 @@ function computeSceneViewport(w: number, h: number): SceneViewport {
 
 // ─── Main draw ───────────────────────────────────────────────────────────────
 
+interface DrawCaches {
+  staticBase: StaticBaseCache | null;
+}
+
 function draw(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
+  dpr: number,
   frame: number,
   t: number,
   patches: ReturnType<typeof buildGrassPatches>,
   drag: WireDragState,
-  scene: HealingSceneState
-): void {
+  scene: HealingSceneState,
+  caches: DrawCaches
+): DrawCaches {
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = BG_COLOR;
   ctx.fillRect(0, 0, w, h);
 
-  const seed = frameSeed(frame);
+  // Boil seed only changes every BOIL_FRAME_STRIDE frames so the dynamic ink
+  // looks like a hand-drawn animation rather than TV static.
+  const seed = frameSeed(Math.floor(frame / BOIL_FRAME_STRIDE));
   const baseAlpha = sceneBaseAlpha(scene);
   const viewport = computeSceneViewport(w, h);
 
+  // 1. Pre-baked static base (grass + path fill + path reserve + pole shafts).
+  //    This is one drawImage call that replaces ~7000 strokes.
+  const staticBase = getStaticBaseLayer(w, h, dpr, patches, caches.staticBase);
+  ctx.save();
+  ctx.globalAlpha = baseAlpha;
+  ctx.drawImage(staticBase.canvas, 0, 0, w, h);
+  ctx.restore();
+
+  // 2. Dynamic ink edges + wires — the only strokes that need per-frame boil.
   ctx.save();
   ctx.translate(viewport.x, viewport.y);
   ctx.globalAlpha = baseAlpha;
 
-  // 1. Grass banks under the path
-  drawGrassPatches(ctx, patches, viewport.width, viewport.height, t, seed);
+  drawPathDynamic(ctx, viewport.width, viewport.height, seed);
 
-  // 2. Reserve blank paper around the path before repainting the path.
-  drawPathReserve(ctx, viewport.width, viewport.height);
-
-  // 3. Path base
-  drawPath(ctx, viewport.width, viewport.height, seed);
-
-  // 4. Poles back-to-front
   for (let i = POLES.length - 1; i >= 0; i--) {
-    drawPole(ctx, i, viewport.width, viewport.height, seed);
+    drawPoleDynamic(ctx, i, viewport.width, viewport.height, seed);
   }
 
-  // 5. Wires
   for (let i = 0; i < WIRES.length; i++) {
     drawWire(ctx, i, t, viewport.width, viewport.height, seed, drag);
   }
 
   ctx.restore();
 
-  // 6. Handwritten scenery, assembled from glyph-like ink marks.
+  // 3. Handwritten scenery (manages its own per-glyph alpha via motifMotion).
   ctx.save();
   ctx.translate(viewport.x, viewport.y);
   drawHandwrittenScenery(ctx, viewport.width, viewport.height, t, seed, scene);
   ctx.restore();
 
-  // 7. Post-processing
+  // 4. Post-processing grain.
   drawGrain(ctx, w, h, 0.11 * Math.max(0.35, baseAlpha), 0.16);
+
+  return { staticBase };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -766,6 +894,7 @@ export default function InkPolesCanvas({
     pointer: { x: 0, y: 0 },
     tension: 0,
   });
+  const cachesRef = useRef<DrawCaches>({ staticBase: null });
 
   // Build patches once — stable geometry, animation is time-driven
   const patches = useMemo(() => buildGrassPatches(), []);
@@ -789,7 +918,7 @@ export default function InkPolesCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr  = window.devicePixelRatio || 1;
+    const dpr  = Math.min(window.devicePixelRatio || 1, 2);
     const cssW = canvas.clientWidth;
     const cssH = canvas.clientHeight;
 
@@ -807,13 +936,24 @@ export default function InkPolesCanvas({
 
     relaxReleasedWire(dragRef.current);
     const phaseMarker = phaseRef.current;
-    draw(ctx, cssW, cssH, frameRef.current, t, patches, dragRef.current, {
-      motif: phaseMarker.motif,
-      phase: phaseMarker.phase,
-      phaseAge: Math.max(0, t - phaseMarker.startedAt),
-      sceneKey: phaseMarker.sceneKey,
-      tension: dragRef.current.tension,
-    });
+    cachesRef.current = draw(
+      ctx,
+      cssW,
+      cssH,
+      dpr,
+      frameRef.current,
+      t,
+      patches,
+      dragRef.current,
+      {
+        motif: phaseMarker.motif,
+        phase: phaseMarker.phase,
+        phaseAge: Math.max(0, t - phaseMarker.startedAt),
+        sceneKey: phaseMarker.sceneKey,
+        tension: dragRef.current.tension,
+      },
+      cachesRef.current
+    );
     frameRef.current++;
     rafRef.current = requestAnimationFrame(animateFrame);
   }, [patches]);

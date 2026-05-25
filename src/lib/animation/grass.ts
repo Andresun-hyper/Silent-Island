@@ -88,11 +88,11 @@ export function buildGrassPatches(): GrassPatch[] {
   }
 
   [
-    patch(0.27, 0.91, 0.20, 0.108, -0.78, 5, 4, 24.2, 155, 1.3),
-    patch(0.35, 0.82, 0.23, 0.126, -0.52, 3, 5, 26.4, 185, 2.0),
-    patch(0.50, 0.71, 0.25, 0.120, -0.22, 3, 4, 29.1, 205, 3.4),
-    patch(0.64, 0.64, 0.28, 0.118,  0.05, 4, 5, 31.7, 215, 4.1),
-    patch(0.56, 0.84, 0.22, 0.104, -0.18, 5, 3, 34.6, 170, 5.2),
+    patch(0.27, 0.91, 0.20, 0.108, -0.78, 5, 4, 24.2, 72, 1.3),
+    patch(0.35, 0.82, 0.23, 0.126, -0.52, 3, 5, 26.4, 86, 2.0),
+    patch(0.50, 0.71, 0.25, 0.120, -0.22, 3, 4, 29.1, 96, 3.4),
+    patch(0.64, 0.64, 0.28, 0.118,  0.05, 4, 5, 31.7, 100, 4.1),
+    patch(0.56, 0.84, 0.22, 0.104, -0.18, 5, 3, 34.6, 80, 5.2),
   ].forEach((bank) => patches.push(bank));
 
   POLES.forEach((pole, i) => {
@@ -105,7 +105,7 @@ export function buildGrassPatches(): GrassPatch[] {
       i % 3,
       (i + 3) % GRASS_TONES.length,
       i * 1.1 + 2,
-      36 + i * 6,
+      18 + i * 3,
       i * 1.2
     ));
 
@@ -118,7 +118,7 @@ export function buildGrassPatches(): GrassPatch[] {
       (i + 1) % GRASS_TONES.length,
       (i + 4) % GRASS_TONES.length,
       i * 1.7 + 6,
-      28 + i * 5,
+      14 + i * 3,
       i * 0.8 + 2.1
     ));
   });
@@ -144,7 +144,7 @@ export function buildGrassPatches(): GrassPatch[] {
       (i + 1) % GRASS_TONES.length,
       (i + 4) % GRASS_TONES.length,
       i * 2.3 + 9,
-      34 + (i % 3) * 8,
+      16 + (i % 3) * 4,
       i * 1.4 + 0.5
     ));
   });
@@ -333,10 +333,10 @@ function drawDenseGrassMass(
   const sinA = Math.sin(wash.angle);
   const seedPhase = (seed & 2047) * 0.009;
   const layers = [
-    { count: 320 + Math.floor(wash.rx * 520), colorIdx: wash.colorIdx, alpha: 0.78, width: 0.70, blur: 0.90, span: 0.95 },
-    { count: 240 + Math.floor(wash.rx * 400), colorIdx: 5, alpha: 0.58, width: 0.48, blur: 0.55, span: 0.86 },
-    { count: 170 + Math.floor(wash.rx * 290), colorIdx: 3, alpha: 0.42, width: 0.34, blur: 0.30, span: 0.76 },
-    { count: 90 + Math.floor(wash.rx * 160), colorIdx: 1, alpha: 0.16, width: 0.28, blur: 0.35, span: 0.66 },
+    { count: 140 + Math.floor(wash.rx * 220), colorIdx: wash.colorIdx, alpha: 0.78, width: 0.70, blur: 0.90, span: 0.95 },
+    { count: 100 + Math.floor(wash.rx * 170), colorIdx: 5, alpha: 0.58, width: 0.48, blur: 0.55, span: 0.86 },
+    { count: 70 + Math.floor(wash.rx * 120), colorIdx: 3, alpha: 0.42, width: 0.34, blur: 0.30, span: 0.76 },
+    { count: 40 + Math.floor(wash.rx * 70), colorIdx: 1, alpha: 0.16, width: 0.28, blur: 0.35, span: 0.66 },
   ];
 
   for (let layer = 0; layer < layers.length; layer++) {
@@ -385,7 +385,7 @@ function drawBankBristles(
   const cosA = Math.cos(wash.angle);
   const sinA = Math.sin(wash.angle);
   const boilPhase = (seed & 1023) * 0.013;
-  const count = Math.floor(230 + wash.rx * 520);
+  const count = Math.floor(100 + wash.rx * 220);
 
   ctx.save();
   ctx.filter = "blur(0.55px)";

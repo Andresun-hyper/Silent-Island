@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HealingMotif, HealingPhase } from "./ink-poles-canvas";
 
 const InkPolesCanvas = dynamic(
@@ -21,12 +21,44 @@ function formatTime(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
-export default function InkPolesWrapper() {
+/** Visible chrome around the canvas — full demo UI, or none for embedded use. */
+export type InkPolesChrome = "full" | "none";
+
+/** Layout mode of the wrapper:
+ *  - "fullscreen" — fixed to the viewport (default, used by `app/page.tsx`).
+ *  - "inline"     — absolutely fills its (positioned) parent. Use this when
+ *                   embedding into another React project / route. */
+export type InkPolesLayout = "fullscreen" | "inline";
+
+export interface InkPolesWrapperProps {
+  /** Initial motif to display. Default "bird". */
+  initialMotif?: HealingMotif;
+  /** Whether the scene auto-cycles entering → idle → leaving → entering after
+   *  a reset. Set to false if the host project wants to drive the lifecycle. */
+  autoCycle?: boolean;
+  /** Show the demo chrome (title, session counter, motif buttons, tension
+   *  indicator) or hide everything except the canvas. Default "full". */
+  chrome?: InkPolesChrome;
+  /** Position the stage as a fullscreen surface or fill its parent. */
+  layout?: InkPolesLayout;
+  /** Optional class name appended to the stage element. */
+  className?: string;
+}
+
+export default function InkPolesWrapper({
+  initialMotif = "bird",
+  autoCycle = true,
+  chrome = "full",
+  layout = "fullscreen",
+  className,
+}: InkPolesWrapperProps = {}) {
   const [phase, setPhase] = useState<HealingPhase>("entering");
-  const [motif, setMotif] = useState<HealingMotif>("bird");
+  const [motif, setMotif] = useState<HealingMotif>(initialMotif);
   const [sceneKey, setSceneKey] = useState(0);
   const [pullCount, setPullCount] = useState(0);
   const [tension, setTension] = useState(0);
+  const tensionRef = useRef(0);
+  const tensionRafRef = useRef<number | null>(null);
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -51,13 +83,13 @@ export default function InkPolesWrapper() {
     if (phase === "leaving") {
       const timer = window.setTimeout(() => {
         setSceneKey((value) => value + 1);
-        setPhase("entering");
+        setPhase(autoCycle ? "entering" : "idle");
       }, 1900);
       return () => window.clearTimeout(timer);
     }
 
     return undefined;
-  }, [phase, sceneKey]);
+  }, [phase, sceneKey, autoCycle]);
 
   const triggerMotif = useCallback((nextMotif?: HealingMotif) => {
     if (nextMotif) setMotif(nextMotif);
@@ -71,6 +103,15 @@ export default function InkPolesWrapper() {
     triggerMotif();
   }, [triggerMotif]);
 
+  const handleWireTensionChange = useCallback((value: number) => {
+    tensionRef.current = value;
+    if (tensionRafRef.current !== null) return;
+    tensionRafRef.current = window.requestAnimationFrame(() => {
+      setTension(tensionRef.current);
+      tensionRafRef.current = null;
+    });
+  }, []);
+
   const resetScene = useCallback(() => {
     setTension(0);
     setPhase("leaving");
@@ -81,49 +122,59 @@ export default function InkPolesWrapper() {
     [tension]
   );
 
+  const stageClass = [
+    "ink-stage",
+    layout === "inline" ? "ink-stage--inline" : null,
+    className,
+  ].filter(Boolean).join(" ");
+
   return (
-    <main className="ink-stage" data-phase={phase}>
+    <main className={stageClass} data-phase={phase}>
       <InkPolesCanvas
         motif={motif}
         phase={phase}
         sceneKey={sceneKey}
         onWireRelease={handleWireRelease}
-        onWireTensionChange={setTension}
+        onWireTensionChange={handleWireTensionChange}
       />
 
-      <section className="app-mark" aria-label="孤岛疗愈">
-        <div className="app-title">孤岛疗愈</div>
-        <div className="app-session">
-          <span>{formatTime(elapsed)}</span>
-          <span>{pullCount.toString().padStart(2, "0")}</span>
-        </div>
-      </section>
+      {chrome === "full" && (
+        <>
+          <section className="app-mark" aria-label="孤岛疗愈">
+            <div className="app-title">孤岛疗愈</div>
+            <div className="app-session">
+              <span>{formatTime(elapsed)}</span>
+              <span>{pullCount.toString().padStart(2, "0")}</span>
+            </div>
+          </section>
 
-      <nav className="motif-dock" aria-label="造景切换">
-        {MOTIFS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={item.id === motif ? "motif-button is-active" : "motif-button"}
-            aria-label={item.label}
-            onClick={() => triggerMotif(item.id)}
-          >
-            <span aria-hidden="true">{item.mark}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className="motif-button"
-          aria-label="重置场景"
-          onClick={resetScene}
-        >
-          <span aria-hidden="true">r</span>
-        </button>
-      </nav>
+          <nav className="motif-dock" aria-label="造景切换">
+            {MOTIFS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={item.id === motif ? "motif-button is-active" : "motif-button"}
+                aria-label={item.label}
+                onClick={() => triggerMotif(item.id)}
+              >
+                <span aria-hidden="true">{item.mark}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="motif-button"
+              aria-label="重置场景"
+              onClick={resetScene}
+            >
+              <span aria-hidden="true">r</span>
+            </button>
+          </nav>
 
-      <div className="tension-thread" aria-hidden="true">
-        <div style={tensionStyle} />
-      </div>
+          <div className="tension-thread" aria-hidden="true">
+            <div style={tensionStyle} />
+          </div>
+        </>
+      )}
     </main>
   );
 }

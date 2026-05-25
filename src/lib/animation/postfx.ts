@@ -3,15 +3,36 @@
  * Both are painted onto the canvas each frame after all scene elements.
  */
 
+const GRAIN_TILE = 256;
+let grainTile: HTMLCanvasElement | null = null;
+
+function ensureGrainTile(): HTMLCanvasElement {
+  if (grainTile) return grainTile;
+
+  grainTile = document.createElement("canvas");
+  grainTile.width = GRAIN_TILE;
+  grainTile.height = GRAIN_TILE;
+  const ctx = grainTile.getContext("2d");
+  if (!ctx) return grainTile;
+
+  const image = ctx.createImageData(GRAIN_TILE, GRAIN_TILE);
+  const data = image.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const bright = Math.random() > 0.5 ? 255 : 0;
+    const alpha = Math.random() * 255;
+    data[i] = bright;
+    data[i + 1] = bright;
+    data[i + 2] = bright;
+    data[i + 3] = alpha;
+  }
+  ctx.putImageData(image, 0, 0);
+  return grainTile;
+}
+
 /**
  * Draw a heavy radial vignette that smudges the painted edges into
  * the background color. The gradient is wide enough to eat into the
  * composition, pushing the subject toward the center.
- *
- * @param ctx    2D rendering context
- * @param w      canvas width in px
- * @param h      canvas height in px
- * @param bgColor  the background color string (e.g. "#d8d4ce")
  */
 export function drawVignette(
   ctx: CanvasRenderingContext2D,
@@ -21,7 +42,6 @@ export function drawVignette(
 ): void {
   const cx = w / 2;
   const cy = h / 2;
-  // Use the longer half-diagonal so corners are fully covered
   const r = Math.sqrt(cx * cx + cy * cy) * 1.05;
 
   const grad = ctx.createRadialGradient(cx, cy, r * 0.28, cx, cy, r);
@@ -38,14 +58,8 @@ export function drawVignette(
 }
 
 /**
- * Draw film grain: scatter random translucent pixels over the whole canvas.
- * Grain density and opacity are kept heavy to sell the lo-fi aesthetic.
- *
- * @param ctx       2D rendering context
- * @param w         canvas width
- * @param h         canvas height
- * @param intensity grain opacity 0-1 (default 0.13)
- * @param density   fraction of pixels to affect (default 0.18)
+ * Draw film grain by tiling a pre-built noise texture.
+ * Replaces per-frame random fillRect loops (was ~300k calls at 1080p).
  */
 export function drawGrain(
   ctx: CanvasRenderingContext2D,
@@ -54,20 +68,19 @@ export function drawGrain(
   intensity = 0.13,
   density = 0.18
 ): void {
-  const count = Math.floor(w * h * density);
+  const tile = ensureGrainTile();
+  const alpha = intensity * (density / 0.18);
+
   ctx.save();
-  for (let i = 0; i < count; i++) {
-    const x = Math.random() * w;
-    const y = Math.random() * h;
-    const bright = Math.random() > 0.5 ? 255 : 0;
-    const a = Math.random() * intensity;
-    ctx.fillStyle = `rgba(${bright},${bright},${bright},${a.toFixed(3)})`;
-    ctx.fillRect(x | 0, y | 0, 1, 1);
+  ctx.globalAlpha = alpha;
+  for (let y = 0; y < h; y += GRAIN_TILE) {
+    for (let x = 0; x < w; x += GRAIN_TILE) {
+      ctx.drawImage(tile, x, y);
+    }
   }
   ctx.restore();
 }
 
-/** Convert a 6-digit hex color + alpha to rgba(...) string */
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace("#", "");
   const r = parseInt(h.slice(0, 2), 16);
