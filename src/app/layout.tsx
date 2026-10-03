@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const SITE_TITLE = "孤岛疗愈";
-const SITE_DESCRIPTION = "A quiet solitary-healing ink-wash scene.";
+const SITE_DESCRIPTION = "把心事写下来，让它成为风景。一个私密、缓慢的水彩手记小岛。";
 
 export const metadata: Metadata = {
   title: SITE_TITLE,

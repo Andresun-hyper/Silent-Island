@@ -172,6 +172,35 @@ export function drawGrassPatches(
   }
 }
 
+/** Animate a lightweight fringe over the cached dense pigment banks. */
+export function drawGrassSway(ctx: CanvasRenderingContext2D, patches: GrassPatch[], w: number, h: number, t: number, seed: number): void {
+  ctx.save();
+  ctx.strokeStyle = "rgba(76,60,41,.34)";
+  ctx.lineWidth = .65;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (const patch of patches.slice(0, 5)) {
+    for (let i = 0; i < 62; i++) {
+      const x = patch.cx + (noise2(i*.83, patch.noiseOffX)-.5)*patch.rx*1.5;
+      const y = patch.cy + (noise2(i*.67, patch.noiseOffY)-.5)*patch.ry*1.6;
+      let nearPath = false;
+      for (let p = 0; p < PATH_CONTROLS.length-1; p++) {
+        const a=PATH_CONTROLS[p], b=PATH_CONTROLS[p+1];
+        const dx=b.x-a.x, dy=b.y-a.y;
+        const u=Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy)));
+        if (Math.hypot(x-a.x-u*dx,y-a.y-u*dy)<.06) { nearPath=true; break; }
+      }
+      if(nearPath) continue;
+      const length=.01+noise2(i+19,patch.noiseOffY)*.018;
+      const sway=Math.sin(t*.00030+i*.47+patch.breathPhase)*.003;
+      const boil=Math.sin(seed*.0003+i)*.0003;
+      ctx.moveTo(x*w,y*h);
+      ctx.quadraticCurveTo((x+sway*.3)*w,(y-length*.6)*h,(x+sway+boil)*w,(y-length)*h);
+    }
+  }
+  ctx.stroke();ctx.restore();
+}
+
 function patchPolygon(p: GrassPatch, t: number, noiseScale = 1.0): Vec2[] {
   const pts: Vec2[] = [];
   const breathR = Math.sin(t * p.breathFreq + p.breathPhase) * p.breathAmp;

@@ -24,7 +24,9 @@ import type { Vec2 } from "@/lib/animation/geometry";
 import { boilPoints, frameSeed } from "@/lib/animation/boil";
 import { swayOffset } from "@/lib/animation/sway";
 import { drawGrain } from "@/lib/animation/postfx";
-import { buildGrassPatches, drawGrassPatches } from "@/lib/animation/grass";
+import { buildGrassPatches, drawGrassPatches, drawGrassSway } from "@/lib/animation/grass";
+import { drawWorld, drawKeepsakes, keepsakePosition } from "@/lib/animation/world";
+import type { JournalEntry, Place } from "@/lib/journal";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const BG_COLOR     = "#d9d5cf";
@@ -53,6 +55,12 @@ export interface InkPolesCanvasProps {
   sceneKey?: number;
   onWireRelease?: (tension: number) => void;
   onWireTensionChange?: (tension: number) => void;
+  place?: Place;
+  entries?: JournalEntry[];
+  selectedId?: string;
+  paused?: boolean;
+  onKeepsakeSelect?: (id: string) => void;
+  onCanvasReady?: (canvas: HTMLCanvasElement) => void;
 }
 
 interface HealingSceneState {
@@ -61,6 +69,9 @@ interface HealingSceneState {
   phaseAge: number;
   sceneKey: number;
   tension: number;
+  place: Place;
+  entries: JournalEntry[];
+  selectedId?: string;
 }
 
 interface TextGlyph {
@@ -770,36 +781,14 @@ function easeInOutCubic(t: number): number {
 }
 
 function computeSceneViewport(w: number, h: number): SceneViewport {
-  const aspect = w / Math.max(1, h);
-
-  if (aspect < 0.78) {
-    const portraitAspect = aspect < 0.55 ? 0.72 : 0.84;
-    const width = h * portraitAspect;
-    return {
-      x: (w - width) * 0.52,
-      y: 0,
-      width,
-      height: h,
-    };
-  }
-
-  const landscapeAspect = aspect > 2.05 ? 1.92 : 1.66;
-
-  if (aspect > landscapeAspect) {
-    const width = h * landscapeAspect;
-    return {
-      x: (w - width) * 0.5,
-      y: 0,
-      width,
-      height: h,
-    };
-  }
-
-  const height = w / landscapeAspect;
+  // One aspect ratio for drawing and hit-testing keeps poles upright on phones.
+  const portrait = w / Math.max(h, 1) < .8;
+  const width = Math.min(portrait ? w / .87 : w, Math.max(240, h - 90) * 1.66);
+  const height = width / 1.66;
   return {
-    x: 0,
-    y: (h - height) * 0.48,
-    width: w,
+    x: (w - width) * .5,
+    y: (h - height) * (portrait ? .38 : .22) - (portrait ? (h < 640 ? 36 : 0) : 24),
+    width,
     height,
   };
 }
@@ -844,6 +833,9 @@ function draw(
   ctx.translate(viewport.x, viewport.y);
   ctx.globalAlpha = baseAlpha;
 
+  drawGrassSway(ctx, patches, viewport.width, viewport.height, t, seed);
+  drawWorld(ctx, viewport.width, viewport.height, t, seed, scene.place);
+
   drawPathDynamic(ctx, viewport.width, viewport.height, seed);
 
   for (let i = POLES.length - 1; i >= 0; i--) {
@@ -859,7 +851,9 @@ function draw(
   // 3. Handwritten scenery (manages its own per-glyph alpha via motifMotion).
   ctx.save();
   ctx.translate(viewport.x, viewport.y);
-  drawHandwrittenScenery(ctx, viewport.width, viewport.height, t, seed, scene);
+  if (!scene.entries.length) drawHandwrittenScenery(ctx, viewport.width, viewport.height, t, seed, scene);
+  ctx.globalAlpha = baseAlpha;
+  drawKeepsakes(ctx, viewport.width, viewport.height, t, seed, scene.entries, scene.selectedId, scene.phase === "revealing" ? scene.phaseAge : 10000);
   ctx.restore();
 
   // 4. Post-processing grain.
@@ -876,12 +870,21 @@ export default function InkPolesCanvas({
   sceneKey = 0,
   onWireRelease,
   onWireTensionChange,
+  place = "field",
+  entries = [],
+  selectedId,
+  paused = false,
+  onKeepsakeSelect,
+  onCanvasReady,
 }: InkPolesCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef    = useRef<number | null>(null);
   const frameRef  = useRef(0);
-  const startRef  = useRef<number | null>(null);
   const timeRef   = useRef(0);
+  const lastFrameRef = useRef<number | null>(null);
+  const frozenRef = useRef(paused);
+  const reducedMotionRef = useRef(false);
+  const worldRef = useRef({ place, entries, selectedId });
   const phaseRef  = useRef({
     motif,
     phase,
@@ -899,6 +902,17 @@ export default function InkPolesCanvas({
   // Build patches once — stable geometry, animation is time-driven
   const patches = useMemo(() => buildGrassPatches(), []);
 
+  useEffect(() => { frozenRef.current = paused; }, [paused]);
+  useEffect(() => { worldRef.current = { place, entries, selectedId }; }, [place, entries, selectedId]);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => { reducedMotionRef.current = media.matches; };
+    update();
+    media.addEventListener("change", update);
+    if (canvasRef.current) onCanvasReady?.(canvasRef.current);
+    return () => media.removeEventListener("change", update);
+  }, [onCanvasReady]);
+
   useEffect(() => {
     phaseRef.current = {
       motif,
@@ -909,9 +923,10 @@ export default function InkPolesCanvas({
   }, [motif, phase, sceneKey]);
 
   const animate = useCallback(function animateFrame(ts: number) {
-    if (startRef.current === null) startRef.current = ts;
-    const t = ts - startRef.current;
-    timeRef.current = t;
+    const delta = lastFrameRef.current === null ? 0 : Math.min(ts - lastFrameRef.current, 50);
+    lastFrameRef.current = ts;
+    if (!frozenRef.current && !document.hidden) timeRef.current += delta;
+    const t = timeRef.current;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -941,20 +956,21 @@ export default function InkPolesCanvas({
       cssW,
       cssH,
       dpr,
-      frameRef.current,
-      t,
+      reducedMotionRef.current ? 0 : frameRef.current,
+      reducedMotionRef.current ? 0 : t,
       patches,
       dragRef.current,
       {
         motif: phaseMarker.motif,
         phase: phaseMarker.phase,
-        phaseAge: Math.max(0, t - phaseMarker.startedAt),
+        phaseAge: reducedMotionRef.current || (frozenRef.current && phaseMarker.phase === "revealing") ? 10000 : Math.max(0, t - phaseMarker.startedAt),
         sceneKey: phaseMarker.sceneKey,
         tension: dragRef.current.tension,
+        ...worldRef.current,
       },
       cachesRef.current
     );
-    frameRef.current++;
+    if (!frozenRef.current && !document.hidden) frameRef.current++;
     rafRef.current = requestAnimationFrame(animateFrame);
   }, [patches]);
 
@@ -977,6 +993,11 @@ export default function InkPolesCanvas({
 
     const mapped = pointerToScenePoint(event, canvas);
     const pointer = mapped.point;
+    const hitEntry = worldRef.current.entries.slice(0, 12).find((entry, index) => {
+      const [x, y] = keepsakePosition(entry, index);
+      return Math.hypot((pointer.x - x) * mapped.viewport.width, (pointer.y - y) * mapped.viewport.height) < 24;
+    });
+    if (hitEntry) { onKeepsakeSelect?.(hitEntry.id); return; }
     const hit = nearestWire(pointer, mapped.viewport.width, mapped.viewport.height, timeRef.current);
     if (hit.wireIndex === -1 || hit.distancePx > 28) return;
 
@@ -987,7 +1008,7 @@ export default function InkPolesCanvas({
     dragRef.current.tension = wireTension(hit.wireIndex, pointer, mapped.viewport.width, mapped.viewport.height);
     onWireTensionChange?.(dragRef.current.tension);
     event.preventDefault();
-  }, [onWireTensionChange]);
+  }, [onWireTensionChange, onKeepsakeSelect]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!dragRef.current.active) return;
@@ -1019,6 +1040,7 @@ export default function InkPolesCanvas({
     <canvas
       ref={canvasRef}
       className="ink-canvas"
+      aria-label="孤岛水彩风景，电线可拖动，手记风景可点选"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}

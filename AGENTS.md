@@ -6,7 +6,8 @@ This is a standalone Next.js project for the ink-wash utility pole animation.
 
 - `src/app/page.tsx` renders the animation wrapper.
 - `src/components/ink-poles-wrapper.tsx` provides the full-screen stage.
-- `src/components/ink-poles-canvas.tsx` owns the canvas render loop.
+- `src/components/ink-island-three.tsx` owns the active Three.js render loop.
+- `src/components/ink-poles-canvas.tsx` is the preserved legacy 2D renderer.
 - `src/lib/animation/*` contains the drawing geometry, boiling, sway, grass, noise, and post-processing helpers.
 
 ## Commands
@@ -15,6 +16,7 @@ This is a standalone Next.js project for the ink-wash utility pole animation.
 npm install
 npm run dev
 npm run lint
+npm test
 npm run build
 ```
 
